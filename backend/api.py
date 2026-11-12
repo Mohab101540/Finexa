@@ -4,14 +4,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 import db
 import demo_users
 import salary_ai
+import users
 from calculator import DEMO_TALABAT_SMS, TIERS, calculate
 from classifier import ml_classify
 from config import TODAY
@@ -221,17 +222,61 @@ def verify(req: VerifyRequest):
     return review_call(db.verify, req.tx_id)
 
 
+class Login(BaseModel):
+    phone: str = Field(pattern=r"^01[0125][0-9]{8}$")
+    password: str = Field(min_length=8, max_length=128)
+
+
+class Signup(Login):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    hr_salary: float | None = Field(None, gt=0, le=1_000_000)
+    employer: str | None = Field(None, max_length=100)
+    method: Literal["bank", "wallet"] = "bank"
+
+
+def current_user(authorization: Annotated[str | None, Header()] = None):
+    scheme, _, token = (authorization or "").partition(" ")
+    user = scheme.lower() == "bearer" and users.user_for(token)
+    if not user:
+        raise HTTPException(401, "log in first")
+    return user
+
+
+@app.post("/signup", status_code=201)
+def signup(req: Signup):
+    try:
+        return users.signup(req.phone, req.name, req.password, req.hr_salary, req.employer, req.method)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/login")
+def login(req: Login):
+    try:
+        token, user = users.login(req.phone, req.password)
+    except PermissionError as e:
+        raise HTTPException(401, str(e))
+    return {"token": token, "user": user}
+
+
+@app.get("/me")
+def me(user: Annotated[dict, Depends(current_user)]):
+    tier, streak = users.standing(users.ledger(user["id"]))
+    return {**user, "tier": tier, "on_time_streak": streak}
+
+
 @app.get("/history")
-def history():
-    streak = 0
-    for item in DEMO_HISTORY:
-        if item["type"] == "repayment":
-            streak = streak + 1 if item["on_time"] else 0
-    nxt = NEXT_TIER.get(DEMO_TIER)
+def history(authorization: Annotated[str | None, Header()] = None):
+    if authorization:
+        items = users.ledger(current_user(authorization)["id"])
+        tier, streak = users.standing(items)
+    else:
+        items, tier, streak = DEMO_HISTORY, DEMO_TIER, users.standing(DEMO_HISTORY)[1]
+    nxt = NEXT_TIER.get(tier)
     return {
         "today": str(TODAY),
-        "tier": DEMO_TIER,
-        "items": DEMO_HISTORY[::-1],
+        "tier": tier,
+        "items": items[::-1],
         "on_time_streak": streak,
         "next_tier": nxt,
         "next_tier_streak": STREAK_NEEDED.get(nxt),
