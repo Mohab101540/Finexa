@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "app",
-    "slug": "app",
+    "name": "Finexa",
+    "slug": "finexa",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -11,6 +11,10 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.finexa.app",
+      "permissions": [
+        "android.permission.READ_SMS"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -37,6 +41,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "69e8af91-f082-466d-9dcd-4edf1bb6645b"
+      }
+    },
+    "owner": "mohabmohabs-team"
   }
 }

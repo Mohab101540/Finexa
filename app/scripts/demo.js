@@ -1,13 +1,12 @@
 const { spawn, execSync } = require("child_process");
 const dgram = require("dgram");
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 
 const APP = path.resolve(__dirname, "..");
 const BACKEND = path.resolve(APP, "..", "backend");
 const PYTHON = path.join(BACKEND, "venv", "Scripts", "python.exe");
-const LOGS = path.join(os.tmpdir(), "finexa-demo-logs");
+const LOGS = path.join(APP, ".demo-logs");
 const children = [];
 
 const say = (text) => console.log(`\n\x1b[36m>> ${text}\x1b[0m`);

@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     password_hash TEXT NOT NULL, salt TEXT NOT NULL,
     hr_salary REAL, employer TEXT,
-    method TEXT NOT NULL DEFAULT 'bank',   -- how the user is paid out and repays: bank or wallet
+    method TEXT NOT NULL DEFAULT 'bank',
     created TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -26,10 +26,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS ledger (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
-    type TEXT NOT NULL,                    -- withdrawal / repayment
+    type TEXT NOT NULL,
     date TEXT NOT NULL, amount REAL NOT NULL,
-    method TEXT,                           -- withdrawals: bank / wallet
-    on_time INTEGER                        -- repayments: 1 / 0
+    method TEXT,
+    on_time INTEGER
 );
 """
 PUBLIC = ("id", "phone", "name", "hr_salary", "employer", "method")

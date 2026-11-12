@@ -2,6 +2,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { Card, Chip, LABEL, Loading, Screen, Txt } from '@/components/finexa-ui';
 import { ReviewBadge } from '@/components/identify-payment';
+import { PhoneSmsCard } from '@/components/phone-sms';
 import { C, F } from '@/constants/theme';
 import { money, shortDate, Sms, useDemo } from '@/demo-data';
 
@@ -13,6 +14,7 @@ export default function InboxScreen() {
 
   return (
     <Screen title="Inbox" intro="The SMS Finexa read, and how it sorted each one. Only salary and gig income count.">
+      <PhoneSmsCard />
       {inbox && counts ? (
         <>
           <View style={s.summary}>

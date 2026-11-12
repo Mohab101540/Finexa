@@ -33,13 +33,13 @@ IMAGE_TYPES = {b"\xff\xd8\xff": "jpg", b"\x89PNG": "png", b"RIFF": "webp"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS transactions (
-    id TEXT PRIMARY KEY,          -- tx_id(): fingerprint of sender + date + text
+    id TEXT PRIMARY KEY,
     sender TEXT, date TEXT, body TEXT, amount REAL,
-    counterparty TEXT,            -- the person who sent the money, if the SMS names them
+    counterparty TEXT,
     ml_label TEXT, ml_confidence REAL,
     status TEXT NOT NULL,
     answer TEXT, details TEXT, evidence TEXT, evidence_file TEXT,
-    remembered INTEGER DEFAULT 0, -- 1 = answer copied from an earlier payment by the same person
+    remembered INTEGER DEFAULT 0,
     flag_reason TEXT
 );
 CREATE TABLE IF NOT EXISTS senders (

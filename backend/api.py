@@ -135,6 +135,21 @@ def inbox(with_talabat: bool = False, extra: str = "[]"):
     return sorted(rows, key=lambda r: r["date"], reverse=True)
 
 
+class PhoneBatch(BaseModel):
+    messages: list[PastedSms] = Field(max_length=200)
+
+
+@app.post("/classify")
+def classify_phone(req: PhoneBatch):
+    sms_list = [to_sms(m) for m in req.messages]
+    rows = []
+    for i, (sms, label) in enumerate(zip(sms_list, labels(sms_list))):
+        p = parse_sms(sms)
+        rows.append({"id": sms["id"] or f"phone-{i}", "sender": sms["sender"], "date": sms["date"], "body": sms["body"],
+                     "amount": p["amount"], "direction": p["direction"], "label": label})
+    return sorted(rows, key=lambda r: r["date"], reverse=True)
+
+
 class AnalyzeRequest(PastedSms):
     added: list[PastedSms] = []
     with_talabat: bool = False
@@ -294,7 +309,8 @@ def offline_snapshot():
 
 
 if __name__ == "__main__":
-    db.DB_PATH = Path(tempfile.mkdtemp()) / "offline.db"
-    with open(OFFLINE_PATH, "w", encoding="utf-8") as f:
-        json.dump(offline_snapshot(), f, ensure_ascii=False, indent=2)
+    with tempfile.TemporaryDirectory() as tmp:
+        db.DB_PATH = Path(tmp) / "offline.db"
+        with open(OFFLINE_PATH, "w", encoding="utf-8") as f:
+            json.dump(offline_snapshot(), f, ensure_ascii=False, indent=2)
     print(f"Wrote {OFFLINE_PATH}")

@@ -142,7 +142,7 @@ export type Analysis = {
 };
 export type MlLabel = Sms['label'] | 'transfer_in' | 'transfer_out';
 
-async function get<T>(path: string, init?: RequestInit): Promise<T> {
+export async function get<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000); // a slow tunnel should not freeze the demo
   try {
