@@ -11,9 +11,10 @@ from pydantic import BaseModel, Field, StringConstraints
 
 import db
 import demo_users
+import risk_engine
 import salary_ai
 import users
-from calculator import DEMO_TALABAT_SMS, TIERS, calculate
+from calculator import DEMO_TALABAT_SMS, TIERS
 from classifier import ml_classify
 from config import TODAY
 from payers import classify_history, labels
@@ -89,11 +90,8 @@ def demo_calc(with_talabat, method, withdrawn, withdrawals, extra=(), mode="rule
     sms_list, not_salary = user_sms(with_talabat, extra, user)
     u = USERS[user]
     employer = u.get("employer")
-    ai = salary_ai.assess(sms_list, employer=employer, not_salary=not_salary) if mode == "ai" else None
-    result = calculate(sms_list, hr_salary=u["hr_salary"], tier=u["tier"], method=method, withdrawn=withdrawn,
-                       withdrawals_this_cycle=withdrawals, base_rate=ai and ai["rate"], employer=employer,
-                       not_salary=not_salary)
-    return result, ai
+    return risk_engine.decide(sms_list, u["hr_salary"], u["tier"], method, mode, employer, not_salary,
+                              withdrawn=withdrawn, withdrawals_this_cycle=withdrawals)
 
 
 @app.get("/demo")
@@ -269,6 +267,8 @@ def signup(req: Signup):
 def login(req: Login):
     try:
         token, user = users.login(req.phone, req.password)
+    except users.TooManyAttempts as e:
+        raise HTTPException(429, str(e))
     except PermissionError as e:
         raise HTTPException(401, str(e))
     return {"token": token, "user": user}
@@ -278,6 +278,53 @@ def login(req: Login):
 def me(user: Annotated[dict, Depends(current_user)]):
     tier, streak = users.standing(users.ledger(user["id"]))
     return {**user, "tier": tier, "on_time_streak": streak}
+
+
+class LimitRequest(BaseModel):
+    messages: list[PastedSms] = Field(max_length=500)
+    mode: Mode = "rules"
+
+
+def user_limit(user, req):
+    items = users.ledger(user["id"])
+    tier = users.standing(items)[0]
+    args = ([to_sms(m) for m in req.messages], user["hr_salary"] or float("inf"), tier, user["method"], req.mode,
+            user["employer"])
+    result, ai = risk_engine.decide(*args)
+    payday = result.get("last_payday")
+    if payday:
+        withdrawals = [i for i in items if i["type"] == "withdrawal"]
+        this_cycle = [i for i in withdrawals if i["date"] >= str(payday)]
+        unpaid = sum(i["amount"] for i in withdrawals if i["date"] < str(payday)) \
+            > sum(i["amount"] for i in items if i["type"] == "repayment")
+        result, ai = risk_engine.decide(*args, withdrawn=sum(i["amount"] for i in this_cycle),
+                                        withdrawals_this_cycle=len(this_cycle), last_cycle_unpaid=unpaid)
+    return result, ai, tier
+
+
+@app.post("/limit")
+def limit(req: LimitRequest, user: Annotated[dict, Depends(current_user)]):
+    result, ai, tier = user_limit(user, req)
+    return {"available": result["available"], "tier": tier, "mode": req.mode, "reasons": explain(result),
+            "calc": result, "ai": salary_ai.api_block(ai, result)}
+
+
+class WithdrawRequest(LimitRequest):
+    amount: float = Field(gt=0, le=1_000_000)
+    confirm_overuse: bool = False
+
+
+@app.post("/withdraw")
+def withdraw(req: WithdrawRequest, user: Annotated[dict, Depends(current_user)]):
+    result, _, _ = user_limit(user, req)
+    if result.get("blocked"):
+        raise HTTPException(409, f"withdrawals are paused: {result['blocked']}")
+    if req.amount > result["available"]:
+        raise HTTPException(409, f"the most you can withdraw now is EGP {result['available']:,.2f}")
+    if result["overuse_warning"] and not req.confirm_overuse:
+        raise HTTPException(409, "this would be your 5th withdrawal this cycle: send confirm_overuse=true to continue")
+    users.withdraw(user["id"], str(TODAY), round(req.amount, 2), user["method"])
+    return {"withdrawn": round(req.amount, 2), "available_after": round(result["available"] - req.amount, 2)}
 
 
 @app.get("/history")
