@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import sqlite3
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
     hr_salary REAL, employer TEXT,
     method TEXT NOT NULL DEFAULT 'bank',
     backup_card TEXT,
+    workplace TEXT, remote INTEGER NOT NULL DEFAULT 0, last_location TEXT,
     created TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -49,15 +51,17 @@ CREATE TABLE IF NOT EXISTS ledger (
     on_time INTEGER
 );
 """
-PUBLIC = ("id", "phone", "name", "hr_salary", "employer", "method", "backup_card")
+PUBLIC = ("id", "phone", "name", "hr_salary", "employer", "method", "backup_card", "workplace", "remote")
+LATER_COLUMNS = (("sessions", "expires", "TEXT"), ("users", "backup_card", "TEXT"), ("users", "workplace", "TEXT"),
+                 ("users", "remote", "INTEGER NOT NULL DEFAULT 0"), ("users", "last_location", "TEXT"))
 
 
 def connect():
     con = db.connect()
     con.executescript(SCHEMA)
-    for table, column in (("sessions", "expires"), ("users", "backup_card")):
+    for table, column, kind in LATER_COLUMNS:
         if column not in [r[1] for r in con.execute(f"PRAGMA table_info({table})")]:
-            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
     return con
 
 
@@ -70,7 +74,10 @@ def token_hash(token):
 
 
 def public(row):
-    return {k: row[k] for k in PUBLIC}
+    user = {k: row[k] for k in PUBLIC}
+    user["workplace"] = json.loads(user["workplace"]) if user["workplace"] else None
+    user["remote"] = bool(user["remote"])
+    return user
 
 
 def signup(phone, name, password, hr_salary=None, employer=None, method="bank"):
@@ -128,6 +135,23 @@ def withdraw(user_id, date, amount, method):
 def save_backup_card(user_id, card_ref):
     with closing(connect()) as con, con:
         con.execute("UPDATE users SET backup_card = ? WHERE id = ?", (card_ref, user_id))
+
+
+def save_workplace(user_id, lat=None, lon=None, remote=False):
+    workplace = None if lat is None or lon is None else json.dumps({"lat": lat, "lon": lon})
+    with closing(connect()) as con, con:
+        con.execute("UPDATE users SET workplace = ?, remote = ? WHERE id = ?", (workplace, int(remote), user_id))
+
+
+def last_location(user_id):
+    with closing(connect()) as con:
+        row = con.execute("SELECT last_location FROM users WHERE id = ?", (user_id,)).fetchone()
+    return row and row["last_location"] and json.loads(row["last_location"])
+
+
+def save_location(user_id, point):
+    with closing(connect()) as con, con:
+        con.execute("UPDATE users SET last_location = ? WHERE id = ?", (json.dumps(point), user_id))
 
 
 def charge_fee(user_id, date, amount):

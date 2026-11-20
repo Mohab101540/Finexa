@@ -280,9 +280,29 @@ def me(user: Annotated[dict, Depends(current_user)]):
     return {**user, "tier": tier, "on_time_streak": streak}
 
 
+class Location(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    time: datetime | None = None
+
+
+def point(loc, time=None):
+    return loc and {"lat": loc.lat, "lon": loc.lon,
+                    "time": (time or (loc.time or datetime.now()).replace(tzinfo=None)).isoformat(timespec="seconds")}
+
+
 class LimitRequest(BaseModel):
     messages: list[PastedSms] = Field(max_length=500)
     mode: Mode = "rules"
+    location: Location | None = None
+
+
+def user_location_check(user, req):
+    here = point(req.location, users.now())
+    check = risk_engine.location_check(here, user["workplace"], user["remote"], users.last_location(user["id"]))
+    if here:
+        users.save_location(user["id"], here)
+    return check
 
 
 def user_limit(user, req):
@@ -311,7 +331,34 @@ def limit(req: LimitRequest, user: Annotated[dict, Depends(current_user)]):
     result, ai, tier = user_limit(user, req)
     return {"available": result["available"], "max_withdrawal": max_withdrawal(result["available"]),
             "fee_bands": FEE_BANDS, "tier": tier, "mode": req.mode, "reasons": explain(result),
-            "calc": result, "ai": salary_ai.api_block(ai, result)}
+            "calc": result, "ai": salary_ai.api_block(ai, result), "location": user_location_check(user, req)}
+
+
+class WorkplaceRequest(BaseModel):
+    workplace: Location | None = None
+    remote: bool = False
+
+
+@app.post("/workplace")
+def workplace(req: WorkplaceRequest, user: Annotated[dict, Depends(current_user)]):
+    if not req.remote and not req.workplace:
+        raise HTTPException(422, "send a workplace, or remote=true")
+    loc = req.workplace
+    users.save_workplace(user["id"], loc and loc.lat, loc and loc.lon, req.remote)
+    return {"workplace": loc and {"lat": loc.lat, "lon": loc.lon}, "remote": req.remote}
+
+
+class LocationCheck(BaseModel):
+    location: Location
+    workplace: Location | None = None
+    previous: Location | None = None
+    remote: bool = False
+
+
+@app.post("/location-check")
+def location_check(req: LocationCheck):
+    wp = req.workplace and {"lat": req.workplace.lat, "lon": req.workplace.lon}
+    return risk_engine.location_check(point(req.location), wp, req.remote, point(req.previous))
 
 
 REQUIRE_BACKUP_CARD_FOR_WALLET = False
@@ -327,6 +374,9 @@ def withdraw(req: WithdrawRequest, user: Annotated[dict, Depends(current_user)])
     result, _, _ = user_limit(user, req)
     if result.get("blocked"):
         raise HTTPException(409, f"withdrawals are paused: {result['blocked']}")
+    where = user_location_check(user, req)
+    if where["status"] == "failed":
+        raise HTTPException(409, f"location check failed: {where['reason']}")
     if REQUIRE_BACKUP_CARD_FOR_WALLET and user["method"] == "wallet" and not user["backup_card"]:
         raise HTTPException(409, "wallet users need a backup Visa or Mastercard saved before withdrawing")
     amount, fee = round(req.amount, 2), fee_for(req.amount)

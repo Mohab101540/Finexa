@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Card, Loading, ReasonCard, Screen, SectionTitle, Txt } from '@/components/finexa-ui';
+import { LocationCheckCard } from '@/components/location-check';
 import { C, F } from '@/constants/theme';
 import { BAND_COLOR, DemoUser, Method, Mode, money, useDemo } from '@/demo-data';
 
@@ -175,6 +176,8 @@ export default function HomeScreen() {
         </Pressable>
         {sent && <Txt style={[s.hint, { color: C.green }]}>{sent}</Txt>}
       </Card>
+
+      {!offline && <LocationCheckCard />}
 
       {demo && (
         <>
