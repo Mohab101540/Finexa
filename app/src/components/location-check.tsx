@@ -33,9 +33,9 @@ const STATUS = {
   not_enough_data: { label: 'Collecting', color: C.muted },
   skipped: { label: 'Off', color: C.muted },
 };
-const RADII = [100, 200, 500, 1000];
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']; // index = the schedule's day number
-const hhmm = (h: number) => `${String((h + 24) % 24).padStart(2, '0')}:00`;
+export const RADII = [100, 200, 500, 1000];
+export const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']; // index = the schedule's day number
+export const hhmm = (h: number) => `${String((h + 24) % 24).padStart(2, '0')}:00`;
 
 async function here(): Promise<Location.LocationObject> {
   if (!(await Location.requestForegroundPermissionsAsync()).granted) throw new Error('Location permission was not given.');
@@ -208,7 +208,7 @@ export function LocationCheckCard() {
   );
 }
 
-function Chip({ on, onPress, children }: { on: boolean; onPress: () => void; children: string }) {
+export function Chip({ on, onPress, children }: { on: boolean; onPress: () => void; children: string }) {
   return (
     <Pressable
       accessibilityRole="checkbox"
@@ -220,7 +220,7 @@ function Chip({ on, onPress, children }: { on: boolean; onPress: () => void; chi
   );
 }
 
-function Stepper({ value, onMinus, onPlus }: { value: string; onMinus: () => void; onPlus: () => void }) {
+export function Stepper({ value, onMinus, onPlus }: { value: string; onMinus: () => void; onPlus: () => void }) {
   return (
     <View style={s.stepper}>
       <Pressable accessibilityRole="button" accessibilityLabel={`Earlier than ${value}`} onPress={onMinus} style={s.step}>

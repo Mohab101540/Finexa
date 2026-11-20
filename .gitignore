@@ -7,4 +7,6 @@ dist/
 .env*
 backend/finexa.db
 backend/evidence/
+backend/identity_docs/
+backend/models/face/
 data/private/

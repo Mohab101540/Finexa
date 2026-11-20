@@ -14,7 +14,8 @@
       "package": "com.finexa.app",
       "permissions": [
         "android.permission.READ_SMS",
-        "android.permission.RECEIVE_BOOT_COMPLETED"
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.CAMERA"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -37,6 +38,13 @@
           "locationAlwaysAndWhenInUsePermission": "Finexa checks that you are at your workplace during your work hours, also when the app is closed.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Finexa uses the camera to photograph your national ID, your HR letter and a selfie.",
+          "photosPermission": "Finexa lets you pick a photo of your national ID or HR letter from your gallery."
         }
       ],
       [

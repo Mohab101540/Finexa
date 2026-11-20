@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 import db
 import demo_users
+import identity
 import risk_engine
 import salary_ai
 import users
@@ -390,6 +391,47 @@ def attendance(authorization: Annotated[str | None, Header()] = None):
 
 
 REQUIRE_BACKUP_CARD_FOR_WALLET = False
+REQUIRE_VERIFIED_IDENTITY = False
+
+
+@app.get("/onboarding")
+def onboarding(user: Annotated[dict, Depends(current_user)]):
+    return identity.refresh(user["id"])
+
+
+class NationalId(BaseModel):
+    number: str = Field(min_length=14, max_length=20)
+
+
+@app.post("/onboarding/national-id")
+def national_id(req: NationalId, user: Annotated[dict, Depends(current_user)]):
+    try:
+        return identity.save_national_id(user["id"], req.number)
+    except identity.AlreadyUsed as e:
+        raise HTTPException(409, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+class Document(BaseModel):
+    kind: Literal[tuple(identity.KINDS)]
+    image: str = Field(max_length=7_000_000)
+
+
+@app.post("/onboarding/document")
+def document(req: Document, user: Annotated[dict, Depends(current_user)]):
+    try:
+        return identity.save_document(user["id"], req.kind, req.image)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/onboarding/verify")
+def verify_identity(user: Annotated[dict, Depends(current_user)]):
+    try:
+        return identity.verify(user["id"])
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 class WithdrawRequest(LimitRequest):
@@ -402,6 +444,8 @@ def withdraw(req: WithdrawRequest, user: Annotated[dict, Depends(current_user)])
     result, _, _ = user_limit(user, req)
     if result.get("blocked"):
         raise HTTPException(409, f"withdrawals are paused: {result['blocked']}")
+    if REQUIRE_VERIFIED_IDENTITY and identity.refresh(user["id"])["status"] != "verified":
+        raise HTTPException(409, "your ID and documents are still being checked")
     if REQUIRE_BACKUP_CARD_FOR_WALLET and user["method"] == "wallet" and not user["backup_card"]:
         raise HTTPException(409, "wallet users need a backup Visa or Mastercard saved before withdrawing")
     amount, fee = round(req.amount, 2), fee_for(req.amount)

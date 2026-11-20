@@ -4,6 +4,8 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
+import { useAuth } from '@/auth';
+import { AccountCard } from '@/components/account-card';
 import { Card, Loading, ReasonCard, Screen, SectionTitle, Txt } from '@/components/finexa-ui';
 import { LocationCheckCard } from '@/components/location-check';
 import { C, F } from '@/constants/theme';
@@ -61,6 +63,7 @@ function Segment<T extends string>({
 export default function HomeScreen() {
   const { demo, offline, withTalabat, setWithTalabat, method, setMethod, mode, setMode, user, setUser, withdraw } =
     useDemo();
+  const { account, logout } = useAuth(); // logout also leaves demo mode, back to the account screen
   const max = demo ? Math.floor(demo.available / STEP) * STEP : 0;
   const [amount, setAmount] = useState(0);
   const [sent, setSent] = useState<string | null>(null);
@@ -108,6 +111,14 @@ export default function HomeScreen() {
           <Loading />
         )}
       </View>
+
+      {account ? (
+        <AccountCard />
+      ) : (
+        <Pressable accessibilityRole="button" onPress={logout} style={s.signIn}>
+          <Txt style={s.signInText}>Demo mode · Log in or sign up ›</Txt>
+        </Pressable>
+      )}
 
       {!!demo?.to_review && (
         <Pressable accessibilityRole="link" onPress={() => router.push('/inbox')} style={s.review}>
@@ -253,6 +264,8 @@ const s = StyleSheet.create({
     backgroundColor: C.amber + '14',
   },
   reviewText: { color: C.amber, fontFamily: F.semibold, fontSize: 14 },
+  signIn: { alignSelf: 'flex-start', paddingVertical: 4 },
+  signInText: { color: '#A5B4FC', fontFamily: F.semibold, fontSize: 13 },
   health: {
     flexDirection: 'row',
     justifyContent: 'space-between',

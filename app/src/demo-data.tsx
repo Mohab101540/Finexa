@@ -111,7 +111,7 @@ export type Sms = {
   review: Review | null;
 };
 export type HistoryItem = {
-  type: 'withdrawal' | 'repayment';
+  type: 'withdrawal' | 'repayment' | 'fee'; // a fee only appears in a signed-in user's own ledger
   date: string;
   amount: number;
   method?: string;
@@ -142,11 +142,17 @@ export type Analysis = {
 };
 export type MlLabel = Sms['label'] | 'transfer_in' | 'transfer_out';
 
-export async function get<T>(path: string, init?: RequestInit): Promise<T> {
+let token: string | null = null;
+export const setToken = (t: string | null) => {
+  token = t;
+};
+
+export async function get<T>(path: string, init?: RequestInit, timeoutMs = 8000): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000); // a slow tunnel should not freeze the demo
+  const timer = setTimeout(() => controller.abort(), timeoutMs); // a slow tunnel should not freeze the demo; photo uploads pass a longer time
+  const headers = { ...(init?.headers as Record<string, string>), ...(token && { Authorization: `Bearer ${token}` }) };
   try {
-    const res = await fetch(`${API_URL}${path}`, { ...init, signal: controller.signal });
+    const res = await fetch(`${API_URL}${path}`, { ...init, headers, signal: controller.signal });
     if (!res.ok) throw new Error(JSON.stringify((await res.json().catch(() => null))?.detail ?? `HTTP ${res.status}`));
     return await res.json();
   } finally {

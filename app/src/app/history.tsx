@@ -10,7 +10,11 @@ function Row({ item, pending }: { item: HistoryItem; pending?: boolean }) {
     <Card style={s.row}>
       <View style={{ flex: 1, gap: 2 }}>
         <Txt style={s.rowTitle}>
-          {isWithdrawal ? `Withdrawal to ${item.method === 'wallet' ? 'mobile wallet' : 'bank account'}` : 'Repaid on payday'}
+          {isWithdrawal
+            ? `Withdrawal to ${item.method === 'wallet' ? 'mobile wallet' : 'bank account'}`
+            : item.type === 'fee'
+              ? 'Withdrawal fee'
+              : 'Repaid on payday'}
         </Txt>
         <Txt style={s.rowDate}>{shortDate(item.date)}</Txt>
       </View>

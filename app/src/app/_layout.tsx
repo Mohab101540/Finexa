@@ -11,7 +11,10 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 
+import { AuthProvider, useAuth } from '@/auth';
 import AppTabs from '@/components/app-tabs';
+import { AuthScreen } from '@/components/auth-screen';
+import { OnboardingScreen } from '@/components/onboarding';
 import { C } from '@/constants/theme';
 import { DemoProvider } from '@/demo-data';
 import '@/work-tracking'; // defines the background work-location task before Android needs it
@@ -38,9 +41,20 @@ export default function TabLayout() {
   return (
     <ThemeProvider value={theme}>
       <StatusBar style="light" />
-      <DemoProvider>
-        <AppTabs />
-      </DemoProvider>
+      <AuthProvider>
+        <Main />
+      </AuthProvider>
     </ThemeProvider>
+  );
+}
+
+function Main() {
+  const { account, demoOnly, onboarding } = useAuth();
+  if (!account && !demoOnly) return <AuthScreen />;
+  if (account && onboarding) return <OnboardingScreen />;
+  return (
+    <DemoProvider key={account?.id ?? 'demo'}>
+      <AppTabs />
+    </DemoProvider>
   );
 }
