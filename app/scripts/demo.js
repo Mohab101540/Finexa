@@ -78,32 +78,11 @@ async function main() {
     throw new Error(`Backend did not start. See ${path.join(LOGS, "backend.log")}`);
   say("Backend is running.");
 
-  say("Starting the Cloudflare tunnel...");
-  const cloudflared = require("cloudflared"); // npm package that ships the official cloudflared.exe
-  if (!fs.existsSync(cloudflared.bin)) {
-    say("Downloading cloudflared (only the first time)...");
-    await cloudflared.install(cloudflared.bin);
-  }
-  const tunnelLog = fs.createWriteStream(path.join(LOGS, "tunnel.log"));
-  const tunnel = start(cloudflared.bin, ["tunnel", "--url", "http://localhost:8000"], {});
-  const url = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("No tunnel address after 90 s. See tunnel.log")), 90000);
-    const onData = (data) => {
-      tunnelLog.write(data);
-      const match = data.toString().match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[0]);
-      }
-    };
-    tunnel.stdout.on("data", onData);
-    tunnel.stderr.on("data", onData);
-  });
-  fs.writeFileSync(path.join(APP, ".env.local"), `EXPO_PUBLIC_API_URL=${url}\n`);
-  say(`Tunnel address ${url} written to app/.env.local. Checking it works...`);
-  say((await waitFor(`${url}/demo`, 60)) ? "Tunnel works." : "Tunnel does not answer yet; the app shows the offline demo until it does.");
-
   const ip = await lanAddress();
+  const url = `http://${ip}:8081/api`;
+  fs.writeFileSync(path.join(APP, ".env.local"), `EXPO_PUBLIC_API_URL=${url}\n`);
+  say(`Backend address for the app: ${url} (written to app/.env.local).`);
+
   say(`Laptop address: ${ip}. Starting Expo (LAN mode)...`);
   console.log(`   Phone: same Wi-Fi as this laptop. In Expo Go scan the QR code, or enter  exp://${ip}:8081`);
   console.log("   Ctrl+C stops everything.");

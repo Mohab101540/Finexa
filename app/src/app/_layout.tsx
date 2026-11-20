@@ -14,6 +14,7 @@ import { useEffect } from 'react';
 import AppTabs from '@/components/app-tabs';
 import { C } from '@/constants/theme';
 import { DemoProvider } from '@/demo-data';
+import '@/work-tracking'; // defines the background work-location task before Android needs it
 
 SplashScreen.preventAutoHideAsync();
 

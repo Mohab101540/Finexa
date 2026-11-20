@@ -13,7 +13,8 @@
     "android": {
       "package": "com.finexa.app",
       "permissions": [
-        "android.permission.READ_SMS"
+        "android.permission.READ_SMS",
+        "android.permission.RECEIVE_BOOT_COMPLETED"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -32,7 +33,10 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Finexa checks that you are at your workplace before a withdrawal."
+          "locationWhenInUsePermission": "Finexa checks that you are at your workplace during your work hours.",
+          "locationAlwaysAndWhenInUsePermission": "Finexa checks that you are at your workplace during your work hours, also when the app is closed.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [

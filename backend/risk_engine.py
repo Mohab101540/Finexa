@@ -1,6 +1,10 @@
+from datetime import datetime, timedelta
+
 import salary_ai
 from calculator import calculate
-from geofence import WORKPLACE_RADIUS_M, distance_m, looks_spoofed
+from geofence import DEFAULT_SCHEDULE, WORKPLACE_RADIUS_M, distance_m, in_work_hours, looks_spoofed
+
+ATTENDANCE_DAYS, MIN_CHECKS, MIN_INSIDE_SHARE = 14, 6, 0.70
 
 
 def rules_engine(sms_list, employer, not_salary):
@@ -24,19 +28,39 @@ def decide(sms_list, hr_salary, tier="Starter", method="bank", mode="rules", emp
     return result, assessment
 
 
-def location_check(location, workplace=None, remote=False, previous=None, radius_m=WORKPLACE_RADIUS_M):
-    def out(status, reason, distance=None):
-        return {"status": status, "reason": reason, "distance_m": distance}
-
+def attendance(readings, workplace=None, radius_m=WORKPLACE_RADIUS_M, schedule=DEFAULT_SCHEDULE, remote=False,
+               now=None):
+    now = now or datetime.now()
+    since = now - timedelta(days=ATTENDANCE_DAYS)
+    counted = sorted((r for r in readings if since <= datetime.fromisoformat(r["time"]) <= now
+                      and in_work_hours(datetime.fromisoformat(r["time"]), schedule)), key=lambda r: r["time"])
+    out = {"checks": len(counted), "inside": 0, "share": None, "jumps": 0, "last": None,
+           "work_hours_now": in_work_hours(now, schedule)}
     if remote:
-        return out("skipped", "Remote worker: the location check is off.")
+        return {**out, "status": "skipped", "reason": "Remote worker: your location is not checked. "
+                                                      "Your limit relies on your cash flow instead."}
     if not workplace:
-        return out("skipped", "No workplace on file, so there is no location check.")
-    if not location:
-        return out("failed", "Share your location to withdraw.")
-    if previous and looks_spoofed(previous, location):
-        return out("failed", "Your location jumped faster than a car can travel. Turn off any fake GPS app.")
-    distance = round(distance_m(location["lat"], location["lon"], workplace["lat"], workplace["lon"]))
-    if distance > radius_m:
-        return out("failed", f"You are {distance:,} m from your workplace. Withdraw when you are at work.", distance)
-    return out("passed", f"You are at your workplace ({distance:,} m away).", distance)
+        return {**out, "status": "skipped", "reason": "No workplace set yet, so there is no location check."}
+
+    distances = [round(distance_m(r["lat"], r["lon"], workplace["lat"], workplace["lon"])) for r in counted]
+    inside = sum(d <= radius_m for d in distances)
+    jumps = sum(looks_spoofed(a, b) for a, b in zip(counted, counted[1:]))
+    share = inside / len(counted) if counted else None
+    out.update(inside=inside, share=share and round(share, 3), jumps=jumps,
+               last=counted and {"time": counted[-1]["time"], "distance_m": distances[-1],
+                                 "inside": distances[-1] <= radius_m} or None)
+    record = (f"Inside your work area on {inside} of {len(counted)} checks ({share:.0%}) during your work hours "
+              f"over the last {ATTENDANCE_DAYS} days.") if counted else ""
+    if jumps:
+        return {**out, "status": "needs_review",
+                "reason": f"Your location jumped faster than a car can travel ({jumps} time{'s' * (jumps > 1)}). "
+                          "Turn off any fake GPS app. A person will review your account; you can still withdraw."}
+    if len(counted) < MIN_CHECKS:
+        return {**out, "status": "not_enough_data",
+                "reason": f"{len(counted)} of {MIN_CHECKS} work-time checks so far. Finexa needs a few more "
+                          "before it judges your attendance."}
+    if share < MIN_INSIDE_SHARE:
+        return {**out, "status": "needs_review",
+                "reason": f"{record} That is below {MIN_INSIDE_SHARE:.0%}, so a person will review your account. "
+                          "You can still withdraw."}
+    return {**out, "status": "ok", "reason": record}

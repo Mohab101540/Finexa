@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 import db
 from explainer import NEXT_TIER, STREAK_NEEDED
+from geofence import DEFAULT_SCHEDULE, WORKPLACE_RADIUS_M
 
 SESSION_DAYS = 30
 MAX_FAILED_LOGINS, LOCKOUT_MINUTES = 5, 15
@@ -30,8 +31,19 @@ CREATE TABLE IF NOT EXISTS users (
     hr_salary REAL, employer TEXT,
     method TEXT NOT NULL DEFAULT 'bank',
     backup_card TEXT,
-    workplace TEXT, remote INTEGER NOT NULL DEFAULT 0, last_location TEXT,
     created TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workplaces (
+    user_id INTEGER PRIMARY KEY,
+    lat REAL, lon REAL,
+    radius_m INTEGER NOT NULL,
+    remote INTEGER NOT NULL DEFAULT 0,
+    schedule TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS locations (
+    user_id INTEGER NOT NULL,
+    time TEXT NOT NULL,
+    lat REAL NOT NULL, lon REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
@@ -51,9 +63,9 @@ CREATE TABLE IF NOT EXISTS ledger (
     on_time INTEGER
 );
 """
-PUBLIC = ("id", "phone", "name", "hr_salary", "employer", "method", "backup_card", "workplace", "remote")
-LATER_COLUMNS = (("sessions", "expires", "TEXT"), ("users", "backup_card", "TEXT"), ("users", "workplace", "TEXT"),
-                 ("users", "remote", "INTEGER NOT NULL DEFAULT 0"), ("users", "last_location", "TEXT"))
+PUBLIC = ("id", "phone", "name", "hr_salary", "employer", "method", "backup_card")
+LATER_COLUMNS = (("sessions", "expires", "TEXT"), ("users", "backup_card", "TEXT"))
+DEMO_USER_ID = 0
 
 
 def connect():
@@ -74,10 +86,7 @@ def token_hash(token):
 
 
 def public(row):
-    user = {k: row[k] for k in PUBLIC}
-    user["workplace"] = json.loads(user["workplace"]) if user["workplace"] else None
-    user["remote"] = bool(user["remote"])
-    return user
+    return {k: row[k] for k in PUBLIC}
 
 
 def signup(phone, name, password, hr_salary=None, employer=None, method="bank"):
@@ -137,21 +146,30 @@ def save_backup_card(user_id, card_ref):
         con.execute("UPDATE users SET backup_card = ? WHERE id = ?", (card_ref, user_id))
 
 
-def save_workplace(user_id, lat=None, lon=None, remote=False):
-    workplace = None if lat is None or lon is None else json.dumps({"lat": lat, "lon": lon})
+def save_workplace(user_id, lat=None, lon=None, radius_m=WORKPLACE_RADIUS_M, schedule=DEFAULT_SCHEDULE, remote=False):
     with closing(connect()) as con, con:
-        con.execute("UPDATE users SET workplace = ?, remote = ? WHERE id = ?", (workplace, int(remote), user_id))
+        con.execute("INSERT OR REPLACE INTO workplaces (user_id, lat, lon, radius_m, remote, schedule) "
+                    "VALUES (?, ?, ?, ?, ?, ?)", (user_id, lat, lon, radius_m, int(remote), json.dumps(schedule)))
 
 
-def last_location(user_id):
+def workplace(user_id):
     with closing(connect()) as con:
-        row = con.execute("SELECT last_location FROM users WHERE id = ?", (user_id,)).fetchone()
-    return row and row["last_location"] and json.loads(row["last_location"])
+        row = con.execute("SELECT * FROM workplaces WHERE user_id = ?", (user_id,)).fetchone()
+    return row and {"workplace": None if row["lat"] is None else {"lat": row["lat"], "lon": row["lon"]},
+                    "radius_m": row["radius_m"], "schedule": json.loads(row["schedule"]), "remote": bool(row["remote"])}
 
 
-def save_location(user_id, point):
+def add_locations(user_id, points, keep_after):
     with closing(connect()) as con, con:
-        con.execute("UPDATE users SET last_location = ? WHERE id = ?", (json.dumps(point), user_id))
+        con.executemany("INSERT INTO locations (user_id, time, lat, lon) VALUES (?, ?, ?, ?)",
+                        [(user_id, p["time"], p["lat"], p["lon"]) for p in points])
+        con.execute("DELETE FROM locations WHERE user_id = ? AND time < ?", (user_id, keep_after))
+
+
+def locations(user_id):
+    with closing(connect()) as con:
+        rows = con.execute("SELECT time, lat, lon FROM locations WHERE user_id = ? ORDER BY time", (user_id,))
+        return [dict(r) for r in rows]
 
 
 def charge_fee(user_id, date, amount):

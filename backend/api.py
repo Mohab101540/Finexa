@@ -1,6 +1,6 @@
 import json
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -17,6 +17,7 @@ import users
 from calculator import DEMO_TALABAT_SMS, FEE_BANDS, TIERS, fee_for, max_withdrawal
 from classifier import ml_classify
 from config import TODAY
+from geofence import CAIRO, DEFAULT_SCHEDULE, WORKPLACE_RADIUS_M, cairo_time, in_work_hours
 from payers import classify_history, labels
 from explainer import BOOSTER_LEVELS, NEXT_TIER, STREAK_NEEDED, explain
 from health import health
@@ -280,29 +281,9 @@ def me(user: Annotated[dict, Depends(current_user)]):
     return {**user, "tier": tier, "on_time_streak": streak}
 
 
-class Location(BaseModel):
-    lat: float = Field(ge=-90, le=90)
-    lon: float = Field(ge=-180, le=180)
-    time: datetime | None = None
-
-
-def point(loc, time=None):
-    return loc and {"lat": loc.lat, "lon": loc.lon,
-                    "time": (time or (loc.time or datetime.now()).replace(tzinfo=None)).isoformat(timespec="seconds")}
-
-
 class LimitRequest(BaseModel):
     messages: list[PastedSms] = Field(max_length=500)
     mode: Mode = "rules"
-    location: Location | None = None
-
-
-def user_location_check(user, req):
-    here = point(req.location, users.now())
-    check = risk_engine.location_check(here, user["workplace"], user["remote"], users.last_location(user["id"]))
-    if here:
-        users.save_location(user["id"], here)
-    return check
 
 
 def user_limit(user, req):
@@ -331,34 +312,81 @@ def limit(req: LimitRequest, user: Annotated[dict, Depends(current_user)]):
     result, ai, tier = user_limit(user, req)
     return {"available": result["available"], "max_withdrawal": max_withdrawal(result["available"]),
             "fee_bands": FEE_BANDS, "tier": tier, "mode": req.mode, "reasons": explain(result),
-            "calc": result, "ai": salary_ai.api_block(ai, result), "location": user_location_check(user, req)}
+            "calc": result, "ai": salary_ai.api_block(ai, result), "attendance": attendance_for(user["id"])}
+
+
+def account_id(authorization):
+    return current_user(authorization)["id"] if authorization else users.DEMO_USER_ID
+
+
+def cairo_now():
+    return datetime.now(CAIRO).replace(tzinfo=None)
+
+
+def attendance_for(user_id):
+    settings = users.workplace(user_id) or {}
+    return risk_engine.attendance(users.locations(user_id), settings.get("workplace"),
+                                  settings.get("radius_m", WORKPLACE_RADIUS_M), settings.get("schedule", DEFAULT_SCHEDULE),
+                                  settings.get("remote", False), now=cairo_now())
+
+
+Clock = Annotated[str, StringConstraints(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]
+
+
+class Schedule(BaseModel):
+    days: list[Annotated[int, Field(ge=0, le=6)]] = Field(min_length=1, max_length=7)
+    start: Clock
+    end: Clock
+
+
+class Location(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    time: datetime | None = None
 
 
 class WorkplaceRequest(BaseModel):
     workplace: Location | None = None
+    radius_m: int = Field(WORKPLACE_RADIUS_M, ge=50, le=2000)
+    schedule: Schedule = Schedule(**DEFAULT_SCHEDULE)
     remote: bool = False
+
+
+@app.get("/workplace")
+def get_workplace(authorization: Annotated[str | None, Header()] = None):
+    return users.workplace(account_id(authorization)) or {
+        "workplace": None, "radius_m": WORKPLACE_RADIUS_M, "schedule": DEFAULT_SCHEDULE, "remote": False}
 
 
 @app.post("/workplace")
-def workplace(req: WorkplaceRequest, user: Annotated[dict, Depends(current_user)]):
+def workplace(req: WorkplaceRequest, authorization: Annotated[str | None, Header()] = None):
     if not req.remote and not req.workplace:
         raise HTTPException(422, "send a workplace, or remote=true")
     loc = req.workplace
-    users.save_workplace(user["id"], loc and loc.lat, loc and loc.lon, req.remote)
-    return {"workplace": loc and {"lat": loc.lat, "lon": loc.lon}, "remote": req.remote}
+    users.save_workplace(account_id(authorization), loc and loc.lat, loc and loc.lon, req.radius_m,
+                         req.schedule.model_dump(), req.remote)
+    return get_workplace(authorization)
 
 
-class LocationCheck(BaseModel):
-    location: Location
-    workplace: Location | None = None
-    previous: Location | None = None
-    remote: bool = False
+class Readings(BaseModel):
+    readings: list[Location] = Field(min_length=1, max_length=200)
 
 
-@app.post("/location-check")
-def location_check(req: LocationCheck):
-    wp = req.workplace and {"lat": req.workplace.lat, "lon": req.workplace.lon}
-    return risk_engine.location_check(point(req.location), wp, req.remote, point(req.previous))
+@app.post("/locations")
+def add_locations(req: Readings, authorization: Annotated[str | None, Header()] = None):
+    user_id, now = account_id(authorization), cairo_now()
+    schedule = (users.workplace(user_id) or {}).get("schedule", DEFAULT_SCHEDULE)
+    since = now - timedelta(days=risk_engine.ATTENDANCE_DAYS)
+    points = [{"lat": r.lat, "lon": r.lon, "time": t.isoformat(timespec="seconds")}
+              for r in req.readings for t in [cairo_time(r.time) if r.time else now]
+              if since <= t <= now + timedelta(minutes=5) and in_work_hours(t, schedule)]
+    users.add_locations(user_id, points, since.isoformat(timespec="seconds"))
+    return {"saved": len(points), "attendance": attendance_for(user_id)}
+
+
+@app.get("/attendance")
+def attendance(authorization: Annotated[str | None, Header()] = None):
+    return attendance_for(account_id(authorization))
 
 
 REQUIRE_BACKUP_CARD_FOR_WALLET = False
@@ -374,9 +402,6 @@ def withdraw(req: WithdrawRequest, user: Annotated[dict, Depends(current_user)])
     result, _, _ = user_limit(user, req)
     if result.get("blocked"):
         raise HTTPException(409, f"withdrawals are paused: {result['blocked']}")
-    where = user_location_check(user, req)
-    if where["status"] == "failed":
-        raise HTTPException(409, f"location check failed: {where['reason']}")
     if REQUIRE_BACKUP_CARD_FOR_WALLET and user["method"] == "wallet" and not user["backup_card"]:
         raise HTTPException(409, "wallet users need a backup Visa or Mastercard saved before withdrawing")
     amount, fee = round(req.amount, 2), fee_for(req.amount)

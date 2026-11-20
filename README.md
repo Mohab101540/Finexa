@@ -17,7 +17,8 @@ npm ci
 npm run demo
 ```
 
-`npm run demo` starts the backend on port 8000, a Cloudflare tunnel to it and Expo; scan the QR code with Expo Go.
+`npm run demo` starts the backend on port 8000 and Expo; the app reaches the backend through Expo's port 8081
+(`/api/...`, see `app/metro.config.js`). Scan the QR code with Expo Go.
 If the phone can't connect, allow port 8081 in the Windows firewall.
 
 Reading the phone's real SMS (Inbox tab) needs an Android development build instead of Expo Go:
