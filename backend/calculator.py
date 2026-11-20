@@ -10,6 +10,8 @@ from sms_parser import load_samples, parse_sms
 TIERS = {"Starter": (30, 2000), "Trusted": (40, 4000), "Strong": (50, 6000)}
 TIER_BELOW = {"Strong": "Trusted", "Trusted": "Starter", "Starter": "Starter"}
 WALLET_ADJUSTMENT = -5
+CEILING = 6000 * 1.2
+FEE_BANDS = [(500, 15), (1000, 30), (2000, 55), (4000, 100), (CEILING, 160)]
 OVERUSE_AT = 5
 OVERDUE_AFTER_DAYS = 5
 OTHER_GIG = "Verified side"
@@ -41,9 +43,23 @@ def expected_payday(salary_dates):
         year, month = (year + 1, 1) if month == 12 else (year, month + 1)
 
 
+def fee_for(amount):
+    return next((fee for upper, fee in FEE_BANDS if amount <= upper), FEE_BANDS[-1][1])
+
+
+def max_withdrawal(available):
+    best, lower = 0, 0
+    for upper, fee in FEE_BANDS:
+        amount = min(upper, available - fee)
+        if amount > lower:
+            best = amount
+        lower = upper
+    return round(best, 2)
+
+
 def calculate(sms_list, hr_salary, tier="Starter", method="bank", withdrawn=0,
               last_cycle_unpaid=False, fee=0, withdrawals_this_cycle=0, late_last_repayment=False,
-              today=TODAY, base_rate=None, employer=None, not_salary=()):
+              today=TODAY, base_rate=None, employer=None, not_salary=(), personal_cap=None):
     salaries, gigs, gig_apps = [], [], set()
     known = [sms for sms in sms_list if parse_sms(sms)["date"].date() <= today]
     for sms, label in zip(known, labels(known, employer, not_salary)):
@@ -80,7 +96,9 @@ def calculate(sms_list, hr_salary, tier="Starter", method="bank", withdrawn=0,
     wallet = WALLET_ADJUSTMENT if method == "wallet" else 0
     base = tier_rate if base_rate is None else base_rate
     rate = round(base + booster + wallet, 1)
-    cap = tier_cap * (1 + booster * 2 / 100)
+    cap = min(tier_cap * (1 + booster * 2 / 100), CEILING)
+    if personal_cap is not None:
+        cap = min(cap, personal_cap)
 
     available = max(0, min(earned * rate / 100, cap, earned) - withdrawn - fee)
 
@@ -114,6 +132,7 @@ def calculate(sms_list, hr_salary, tier="Starter", method="bank", withdrawn=0,
         "wallet_adjustment": wallet,
         "rate": rate,
         "cap": cap,
+        "personal_cap": personal_cap,
         "withdrawn": withdrawn,
         "fee": fee,
         "late_last_repayment": late_last_repayment,

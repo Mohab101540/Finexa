@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL, salt TEXT NOT NULL,
     hr_salary REAL, employer TEXT,
     method TEXT NOT NULL DEFAULT 'bank',
+    backup_card TEXT,
     created TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -48,14 +49,15 @@ CREATE TABLE IF NOT EXISTS ledger (
     on_time INTEGER
 );
 """
-PUBLIC = ("id", "phone", "name", "hr_salary", "employer", "method")
+PUBLIC = ("id", "phone", "name", "hr_salary", "employer", "method", "backup_card")
 
 
 def connect():
     con = db.connect()
     con.executescript(SCHEMA)
-    if "expires" not in [r[1] for r in con.execute("PRAGMA table_info(sessions)")]:
-        con.execute("ALTER TABLE sessions ADD COLUMN expires TEXT")
+    for table, column in (("sessions", "expires"), ("users", "backup_card")):
+        if column not in [r[1] for r in con.execute(f"PRAGMA table_info({table})")]:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
     return con
 
 
@@ -123,6 +125,15 @@ def withdraw(user_id, date, amount, method):
     add_entry(user_id, "withdrawal", date, amount, method=method)
 
 
+def save_backup_card(user_id, card_ref):
+    with closing(connect()) as con, con:
+        con.execute("UPDATE users SET backup_card = ? WHERE id = ?", (card_ref, user_id))
+
+
+def charge_fee(user_id, date, amount):
+    add_entry(user_id, "fee", date, amount)
+
+
 def repay(user_id, date, amount, on_time):
     add_entry(user_id, "repayment", date, amount, on_time=on_time)
 
@@ -130,9 +141,20 @@ def repay(user_id, date, amount, on_time):
 def ledger(user_id):
     with closing(connect()) as con:
         rows = con.execute("SELECT * FROM ledger WHERE user_id = ? ORDER BY date, id", (user_id,)).fetchall()
-    return [{"type": r["type"], "date": r["date"], "amount": r["amount"],
-             **({"method": r["method"]} if r["type"] == "withdrawal" else {"on_time": bool(r["on_time"])})}
-            for r in rows]
+    extra = {"withdrawal": lambda r: {"method": r["method"]}, "repayment": lambda r: {"on_time": bool(r["on_time"])},
+             "fee": lambda r: {}}
+    return [{"type": r["type"], "date": r["date"], "amount": r["amount"], **extra[r["type"]](r)} for r in rows]
+
+
+PERSONAL_CAP_START, PERSONAL_CAP_STEP = 1000, 250
+
+
+def personal_cap(items):
+    cap = PERSONAL_CAP_START
+    for item in items:
+        if item["type"] == "repayment":
+            cap = cap + PERSONAL_CAP_STEP if item["on_time"] else max(PERSONAL_CAP_START, cap - 2 * PERSONAL_CAP_STEP)
+    return cap
 
 
 def tier_for(streak):

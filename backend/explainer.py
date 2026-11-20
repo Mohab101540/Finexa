@@ -69,7 +69,10 @@ def explain(r, on_time_streak=None):
         loss = current - amount(earned, rate - wallet, cap)
         reasons.append(reason("red", f"Wallet repayment: −{-wallet}% (−EGP {egp(loss)})",
                               f"السداد من المحفظة: −{-wallet}% (−{egp(loss)} جنيه)", loss))
-    if earned * rate / 100 > cap:
+    if earned * rate / 100 > cap and r.get("personal_cap") == cap:
+        reasons.append(reason("red", f"Your personal cap: EGP {egp(cap)} (+250 with each on-time repayment)",
+                              f"حدك الشخصي: {egp(cap)} جنيه (+250 مع كل سداد في موعده)", cap - earned * rate / 100))
+    elif earned * rate / 100 > cap:
         reasons.append(reason("red", f"Capped at EGP {egp(cap)}", f"الحد الأقصى {egp(cap)} جنيه",
                               cap - earned * rate / 100))
     if r["withdrawn"]:

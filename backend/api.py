@@ -14,7 +14,7 @@ import demo_users
 import risk_engine
 import salary_ai
 import users
-from calculator import DEMO_TALABAT_SMS, TIERS
+from calculator import DEMO_TALABAT_SMS, FEE_BANDS, TIERS, fee_for, max_withdrawal
 from classifier import ml_classify
 from config import TODAY
 from payers import classify_history, labels
@@ -290,23 +290,31 @@ def user_limit(user, req):
     tier = users.standing(items)[0]
     args = ([to_sms(m) for m in req.messages], user["hr_salary"] or float("inf"), tier, user["method"], req.mode,
             user["employer"])
-    result, ai = risk_engine.decide(*args)
+    personal = users.personal_cap(items)
+    result, ai = risk_engine.decide(*args, personal_cap=personal)
     payday = result.get("last_payday")
     if payday:
-        withdrawals = [i for i in items if i["type"] == "withdrawal"]
-        this_cycle = [i for i in withdrawals if i["date"] >= str(payday)]
-        unpaid = sum(i["amount"] for i in withdrawals if i["date"] < str(payday)) \
+        owed = [i for i in items if i["type"] in ("withdrawal", "fee")]
+        this_cycle = [i for i in owed if i["date"] >= str(payday)]
+        unpaid = sum(i["amount"] for i in owed if i["date"] < str(payday)) \
             > sum(i["amount"] for i in items if i["type"] == "repayment")
-        result, ai = risk_engine.decide(*args, withdrawn=sum(i["amount"] for i in this_cycle),
-                                        withdrawals_this_cycle=len(this_cycle), last_cycle_unpaid=unpaid)
+        result, ai = risk_engine.decide(
+            *args, personal_cap=personal, last_cycle_unpaid=unpaid,
+            withdrawn=sum(i["amount"] for i in this_cycle if i["type"] == "withdrawal"),
+            fee=sum(i["amount"] for i in this_cycle if i["type"] == "fee"),
+            withdrawals_this_cycle=sum(i["type"] == "withdrawal" for i in this_cycle))
     return result, ai, tier
 
 
 @app.post("/limit")
 def limit(req: LimitRequest, user: Annotated[dict, Depends(current_user)]):
     result, ai, tier = user_limit(user, req)
-    return {"available": result["available"], "tier": tier, "mode": req.mode, "reasons": explain(result),
+    return {"available": result["available"], "max_withdrawal": max_withdrawal(result["available"]),
+            "fee_bands": FEE_BANDS, "tier": tier, "mode": req.mode, "reasons": explain(result),
             "calc": result, "ai": salary_ai.api_block(ai, result)}
+
+
+REQUIRE_BACKUP_CARD_FOR_WALLET = False
 
 
 class WithdrawRequest(LimitRequest):
@@ -319,12 +327,18 @@ def withdraw(req: WithdrawRequest, user: Annotated[dict, Depends(current_user)])
     result, _, _ = user_limit(user, req)
     if result.get("blocked"):
         raise HTTPException(409, f"withdrawals are paused: {result['blocked']}")
-    if req.amount > result["available"]:
-        raise HTTPException(409, f"the most you can withdraw now is EGP {result['available']:,.2f}")
+    if REQUIRE_BACKUP_CARD_FOR_WALLET and user["method"] == "wallet" and not user["backup_card"]:
+        raise HTTPException(409, "wallet users need a backup Visa or Mastercard saved before withdrawing")
+    amount, fee = round(req.amount, 2), fee_for(req.amount)
+    if amount + fee > result["available"]:
+        raise HTTPException(409, f"the most you can withdraw now is EGP {max_withdrawal(result['available']):,.2f} "
+                                 f"(plus its fee)")
     if result["overuse_warning"] and not req.confirm_overuse:
         raise HTTPException(409, "this would be your 5th withdrawal this cycle: send confirm_overuse=true to continue")
-    users.withdraw(user["id"], str(TODAY), round(req.amount, 2), user["method"])
-    return {"withdrawn": round(req.amount, 2), "available_after": round(result["available"] - req.amount, 2)}
+    users.withdraw(user["id"], str(TODAY), amount, user["method"])
+    users.charge_fee(user["id"], str(TODAY), fee)
+    return {"withdrawn": amount, "fee": fee, "total_owed": amount + fee,
+            "available_after": round(result["available"] - amount - fee, 2)}
 
 
 @app.get("/history")
