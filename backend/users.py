@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 import db
 from explainer import NEXT_TIER, STREAK_NEEDED
-from geofence import DEFAULT_SCHEDULE, WORKPLACE_RADIUS_M
+from geofence import DEFAULT_SCHEDULE, WORKPLACE_RADIUS_M, distance_m
 
 SESSION_DAYS = 30
 MAX_FAILED_LOGINS, LOCKOUT_MINUTES = 5, 15
@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS ledger (
 );
 """
 PUBLIC = ("id", "phone", "name", "hr_salary", "employer", "method", "backup_card")
-LATER_COLUMNS = (("sessions", "expires", "TEXT"), ("users", "backup_card", "TEXT"))
+LATER_COLUMNS = (("sessions", "expires", "TEXT"), ("users", "backup_card", "TEXT"),
+                 ("workplaces", "night_check", "INTEGER NOT NULL DEFAULT 0"))
 DEMO_USER_ID = 0
 
 
@@ -146,17 +147,29 @@ def save_backup_card(user_id, card_ref):
         con.execute("UPDATE users SET backup_card = ? WHERE id = ?", (card_ref, user_id))
 
 
-def save_workplace(user_id, lat=None, lon=None, radius_m=WORKPLACE_RADIUS_M, schedule=DEFAULT_SCHEDULE, remote=False):
+def save_workplace(user_id, lat=None, lon=None, radius_m=WORKPLACE_RADIUS_M, schedule=DEFAULT_SCHEDULE, remote=False,
+                   night_check=False):
     with closing(connect()) as con, con:
-        con.execute("INSERT OR REPLACE INTO workplaces (user_id, lat, lon, radius_m, remote, schedule) "
-                    "VALUES (?, ?, ?, ?, ?, ?)", (user_id, lat, lon, radius_m, int(remote), json.dumps(schedule)))
+        con.execute("INSERT OR REPLACE INTO workplaces (user_id, lat, lon, radius_m, remote, schedule, night_check) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, lat, lon, radius_m, int(remote), json.dumps(schedule), int(night_check)))
 
 
 def workplace(user_id):
     with closing(connect()) as con:
         row = con.execute("SELECT * FROM workplaces WHERE user_id = ?", (user_id,)).fetchone()
     return row and {"workplace": None if row["lat"] is None else {"lat": row["lat"], "lon": row["lon"]},
-                    "radius_m": row["radius_m"], "schedule": json.loads(row["schedule"]), "remote": bool(row["remote"])}
+                    "radius_m": row["radius_m"], "schedule": json.loads(row["schedule"]), "remote": bool(row["remote"]),
+                    "night_check": bool(row["night_check"])}
+
+
+def workplaces_near(lat, lon, metres, except_user):
+    with closing(connect()) as con:
+        rows = con.execute("SELECT w.user_id, w.lat, w.lon, u.employer FROM workplaces w JOIN users u ON u.id = w.user_id "
+                           "WHERE w.user_id NOT IN (?, ?) AND w.remote = 0 AND w.lat IS NOT NULL",
+                           (except_user, DEMO_USER_ID)).fetchall()
+    return [{"user_id": r["user_id"], "employer": r["employer"]} for r in rows
+            if distance_m(lat, lon, r["lat"], r["lon"]) <= metres]
 
 
 def add_locations(user_id, points, keep_after):

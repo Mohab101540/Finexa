@@ -9,7 +9,15 @@ const EVERY_MS = 15 * 60 * 1000; // one reading about every 15 minutes
 export type Point = { lat: number; lon: number };
 export type Reading = Point & { time: string };
 export type Schedule = { days: number[]; start: string; end: string }; // days 0 = Sunday, times "09:00"
-export type WorkSettings = { workplace: Point | null; radius_m: number; schedule: Schedule; remote: boolean };
+export type WorkSettings = {
+  workplace: Point | null;
+  radius_m: number;
+  schedule: Schedule;
+  remote: boolean;
+  night_check?: boolean; // the user agreed to one reading a night (is the workplace their home?)
+};
+
+const isNight = (d: Date) => d.getHours() >= 1 && d.getHours() < 5; // 01:00 to 05:00, same as the backend
 
 const minutes = (hhmm: string) => {
   const [h, m] = hhmm.split(':').map(Number);
@@ -38,7 +46,9 @@ export const post = (body: unknown): RequestInit => ({
 });
 
 export async function sendReadings(readings: Reading[]) {
-  const { schedule } = await get<WorkSettings>('/workplace');
+  const { schedule, night_check } = await get<WorkSettings>('/workplace');
+  const night = readings.filter((r) => isNight(new Date(r.time)));
+  if (night_check && night.length) await get('/night-check', post(night[night.length - 1]));
   const atWork = readings.filter((r) => inWorkHours(new Date(r.time), schedule));
   if (!atWork.length) return 0;
   return (await get<{ saved: number }>('/locations', post({ readings: atWork }))).saved;
@@ -65,7 +75,7 @@ export async function startTracking() {
     distanceInterval: 0,
     foregroundService: {
       notificationTitle: 'Finexa work check',
-      notificationBody: 'Your location is sent to Finexa only during your work hours.',
+      notificationBody: 'Your location is sent to Finexa only in work hours (and once a night if you allowed it).',
     },
   });
 }

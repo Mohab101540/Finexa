@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { errorText, useAuth } from '@/auth';
 import { Card, ReasonCard, Txt } from '@/components/finexa-ui';
@@ -52,7 +52,7 @@ export function AccountCard() {
 
   const check = () =>
     run(async () => {
-      const sms = await readPhoneSms();
+      const sms = Platform.OS === 'ios' ? [] : await readPhoneSms();
       setMessages(sms);
       setLimit(await get<Limit>('/limit', post({ messages: sms })));
       setDone(null);

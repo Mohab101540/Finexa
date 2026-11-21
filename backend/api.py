@@ -14,7 +14,9 @@ import demo_users
 import identity
 import risk_engine
 import salary_ai
+import sms_forward
 import users
+import workplace_checks
 from calculator import DEMO_TALABAT_SMS, FEE_BANDS, TIERS, fee_for, max_withdrawal
 from classifier import ml_classify
 from config import TODAY
@@ -287,10 +289,14 @@ class LimitRequest(BaseModel):
     mode: Mode = "rules"
 
 
+def user_messages(user, messages):
+    return [to_sms(m) for m in messages] if messages else sms_forward.messages(user["id"])
+
+
 def user_limit(user, req):
     items = users.ledger(user["id"])
     tier = users.standing(items)[0]
-    args = ([to_sms(m) for m in req.messages], user["hr_salary"] or float("inf"), tier, user["method"], req.mode,
+    args = (user_messages(user, req.messages),user["hr_salary"] or float("inf"), tier, user["method"], req.mode,
             user["employer"])
     personal = users.personal_cap(items)
     result, ai = risk_engine.decide(*args, personal_cap=personal)
@@ -351,12 +357,14 @@ class WorkplaceRequest(BaseModel):
     radius_m: int = Field(WORKPLACE_RADIUS_M, ge=50, le=2000)
     schedule: Schedule = Schedule(**DEFAULT_SCHEDULE)
     remote: bool = False
+    night_check: bool = False
 
 
 @app.get("/workplace")
 def get_workplace(authorization: Annotated[str | None, Header()] = None):
     return users.workplace(account_id(authorization)) or {
-        "workplace": None, "radius_m": WORKPLACE_RADIUS_M, "schedule": DEFAULT_SCHEDULE, "remote": False}
+        "workplace": None, "radius_m": WORKPLACE_RADIUS_M, "schedule": DEFAULT_SCHEDULE, "remote": False,
+        "night_check": False}
 
 
 @app.post("/workplace")
@@ -365,7 +373,7 @@ def workplace(req: WorkplaceRequest, authorization: Annotated[str | None, Header
         raise HTTPException(422, "send a workplace, or remote=true")
     loc = req.workplace
     users.save_workplace(account_id(authorization), loc and loc.lat, loc and loc.lon, req.radius_m,
-                         req.schedule.model_dump(), req.remote)
+                         req.schedule.model_dump(), req.remote, req.night_check)
     return get_workplace(authorization)
 
 
@@ -388,6 +396,58 @@ def add_locations(req: Readings, authorization: Annotated[str | None, Header()] 
 @app.get("/attendance")
 def attendance(authorization: Annotated[str | None, Header()] = None):
     return attendance_for(account_id(authorization))
+
+
+@app.post("/night-check")
+def night_reading(req: Location, authorization: Annotated[str | None, Header()] = None):
+    user_id = account_id(authorization)
+    when = cairo_time(req.time) if req.time else cairo_now()
+    return {"saved": workplace_checks.save_night_reading(user_id, req.lat, req.lon, when, users.workplace(user_id))}
+
+
+class ChecksRequest(BaseModel):
+    messages: list[PastedSms] = Field([], max_length=500)
+
+
+@app.post("/workplace/checks")
+def workplace_check(req: ChecksRequest, authorization: Annotated[str | None, Header()] = None):
+    user = current_user(authorization) if authorization else {"id": users.DEMO_USER_ID, "employer": None}
+    sms = user_messages(user, req.messages) if authorization else [to_sms(m) for m in req.messages]
+    return workplace_checks.run(user, sms, now=cairo_now())
+
+
+class ForwardedSms(BaseModel):
+    model_config = {"str_strip_whitespace": True}
+    body: str = Field(min_length=1, max_length=1000)
+    sender: str = Field("Unknown", max_length=50)
+
+
+@app.post("/sms/forward-key")
+def forward_key(user: Annotated[dict, Depends(current_user)]):
+    return {"key": sms_forward.new_key(user["id"]), "path": "/sms/forward", "header": "X-Finexa-Key"}
+
+
+@app.post("/sms/forward")
+def forward_sms(req: ForwardedSms, x_finexa_key: Annotated[str | None, Header()] = None):
+    user_id = sms_forward.user_for_key(x_finexa_key)
+    if not user_id:
+        raise HTTPException(401, "unknown forwarding key: make a new one in the Finexa app")
+    parsed = sms_forward.save(user_id, req.sender, req.body, cairo_now())
+    if not parsed:
+        return {"kept": False, "reason": "not a money SMS (no amount or no in/out), so it was not saved"}
+    return {"kept": True, "amount": parsed["amount"], "direction": parsed["direction"]}
+
+
+@app.get("/sms/forwarded")
+def forwarded(user: Annotated[dict, Depends(current_user)]):
+    rows = [parse_sms(s) for s in sms_forward.messages(user["id"])]
+    return {"count": len(rows), "messages": [{"date": p["date"].isoformat(), "sender": p["sender"],
+                                              "amount": p["amount"], "direction": p["direction"]} for p in rows[-20:]]}
+
+
+@app.delete("/sms/forwarded")
+def delete_forwarded(user: Annotated[dict, Depends(current_user)]):
+    return {"deleted": sms_forward.delete_all(user["id"])}
 
 
 REQUIRE_BACKUP_CARD_FOR_WALLET = False

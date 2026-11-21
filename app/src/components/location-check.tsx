@@ -1,11 +1,13 @@
 import * as Location from 'expo-location';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, View } from 'react-native';
 
+import { useAuth } from '@/auth';
 import { Card, Txt } from '@/components/finexa-ui';
 import { WorkMap } from '@/components/work-map';
 import { C, F } from '@/constants/theme';
 import { get } from '@/demo-data';
+import { readPhoneSms } from '@/phone-sms';
 import {
   inWorkHours,
   isTracking,
@@ -33,6 +35,10 @@ const STATUS = {
   not_enough_data: { label: 'Collecting', color: C.muted },
   skipped: { label: 'Off', color: C.muted },
 };
+type Check = { key: string; title: string; status: 'ok' | 'needs_review' | 'not_checked' | 'skipped'; reason: string };
+const CHECK_COLOR = { ok: C.green, needs_review: C.amber, not_checked: C.muted, skipped: C.muted };
+const CHECK_MARK = { ok: '✓', needs_review: '!', not_checked: '·', skipped: '–' };
+
 export const RADII = [100, 200, 500, 1000];
 export const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']; // index = the schedule's day number
 export const hhmm = (h: number) => `${String((h + 24) % 24).padStart(2, '0')}:00`;
@@ -50,8 +56,16 @@ export function LocationCheckCard() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [checks, setChecks] = useState<Check[] | null>(null);
+  const { account } = useAuth();
 
   const refresh = async () => setAttendance(await get<Attendance>('/attendance'));
+
+  const runChecks = () =>
+    run(async () => {
+      const messages = account && Platform.OS === 'android' ? await readPhoneSms().catch(() => []) : [];
+      setChecks((await get<{ checks: Check[] }>('/workplace/checks', post({ messages }), 30_000)).checks);
+    });
 
   useEffect(() => {
     get<WorkSettings>('/workplace').then(setSettings).catch((e) => setError(String(e)));
@@ -159,6 +173,17 @@ export function LocationCheckCard() {
             <Stepper value={schedule.end} onMinus={() => shift('end', -1)} onPlus={() => shift('end', 1)} />
           </View>
 
+          <Txt style={s.label}>Night check</Txt>
+          <View style={s.chips}>
+            <Chip on={!!settings?.night_check} onPress={() => edit({ night_check: !settings?.night_check })}>
+              {settings?.night_check ? 'On: one check a night' : 'Off'}
+            </Chip>
+          </View>
+          <Txt style={s.muted}>
+            Shows your workplace is not your home: one location check between 1 and 5 am. Finexa keeps only "inside
+            the work area or not", never where you were.
+          </Txt>
+
           <View style={s.row}>
             <Pressable accessibilityRole="button" disabled={busy} onPress={checkNow} style={[s.button, s.secondary]}>
               <Txt style={s.buttonText}>Check now</Txt>
@@ -202,6 +227,20 @@ export function LocationCheckCard() {
           <Txt style={s.muted}>This never stops a withdrawal. A weak record is only sent to a person for review.</Txt>
         </View>
       )}
+      {(workplace || settings?.remote) && (
+        <Pressable accessibilityRole="button" disabled={busy} onPress={runChecks} style={[s.button, s.secondary]}>
+          <Txt style={s.buttonText}>{checks ? 'Run the workplace checks again' : 'Is this really my workplace? Run checks'}</Txt>
+        </Pressable>
+      )}
+      {checks?.map((c) => (
+        <View key={c.key} style={s.check}>
+          <Txt style={[s.mark, { color: CHECK_COLOR[c.status] }]}>{CHECK_MARK[c.status]}</Txt>
+          <View style={{ flex: 1 }}>
+            <Txt style={s.checkTitle}>{c.title}</Txt>
+            <Txt style={s.muted}>{c.reason}</Txt>
+          </View>
+        </View>
+      ))}
       {note && <Txt style={s.muted}>{note}</Txt>}
       {error && <Txt style={[s.muted, { color: C.red }]}>{error}</Txt>}
     </Card>
@@ -252,4 +291,7 @@ const s = StyleSheet.create({
   buttonText: { fontFamily: F.semibold, fontSize: 14, textAlign: 'center' },
   reason: { fontSize: 14, lineHeight: 20 },
   muted: { color: C.muted, fontSize: 13, lineHeight: 19 },
+  check: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+  mark: { fontFamily: F.semibold, fontSize: 16, width: 16, textAlign: 'center' },
+  checkTitle: { fontFamily: F.medium, fontSize: 14 },
 });

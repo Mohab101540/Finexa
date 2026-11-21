@@ -7,6 +7,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { useAuth } from '@/auth';
 import { AccountCard } from '@/components/account-card';
 import { Card, Loading, ReasonCard, Screen, SectionTitle, Txt } from '@/components/finexa-ui';
+import { IphoneForwardingCard } from '@/components/iphone-forwarding';
 import { LocationCheckCard } from '@/components/location-check';
 import { C, F } from '@/constants/theme';
 import { BAND_COLOR, DemoUser, Method, Mode, money, useDemo } from '@/demo-data';
@@ -113,7 +114,10 @@ export default function HomeScreen() {
       </View>
 
       {account ? (
-        <AccountCard />
+        <>
+          <AccountCard />
+          <IphoneForwardingCard />
+        </>
       ) : (
         <Pressable accessibilityRole="button" onPress={logout} style={s.signIn}>
           <Txt style={s.signInText}>Demo mode · Log in or sign up ›</Txt>

@@ -268,9 +268,16 @@ function WorkStep({ onChange }: { onChange: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const body = remote ? { workplace: null, remote: true, radius_m: radius, schedule } : { workplace: pin, remote: false, radius_m: radius, schedule };
+      const night_check = settings?.night_check ?? false; // keep the night-check consent if it was given before
+      const body = remote ? { workplace: null, remote: true, radius_m: radius, schedule } : { workplace: pin, remote: false, radius_m: radius, schedule, night_check };
       setSettings(await get<WorkSettings>('/workplace', post(body)));
       setNote('Saved.');
+      if (!remote) {
+        const { checks } = await get<{ checks: { key: string; reason: string }[] }>(
+          '/workplace/checks', post({ messages: [] }), 30_000).catch(() => ({ checks: [] }));
+        const place = checks.find((c) => c.key === 'place');
+        if (place) setNote(`Saved. ${place.reason}`);
+      }
       onChange();
     } catch (e) {
       setError(errorText(e));

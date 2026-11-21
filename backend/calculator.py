@@ -87,7 +87,7 @@ def calculate(sms_list, hr_salary, tier="Starter", method="bank", withdrawn=0,
     payday = salaries[-1][0]
     days_in_cycle = calendar.monthrange(payday.year, payday.month)[1]
     days_passed = min((today - payday).days, days_in_cycle)
-    earned = salary_used * days_passed / days_in_cycle
+    earned =salary_used * days_passed / days_in_cycle
 
     if late_last_repayment:
         tier = TIER_BELOW[tier]

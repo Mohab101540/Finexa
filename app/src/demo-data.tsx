@@ -3,7 +3,7 @@ import { createContext, ReactNode, useContext, useEffect, useState } from 'react
 import { C } from '@/constants/theme';
 import offline from '@/data/demo-offline.json';
 
-const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
+export const API_URL =(process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
 
 export type Reason = { type: 'green' | 'red' | 'info'; en: string; ar: string; egp: number | null };
 export type Calc = {
